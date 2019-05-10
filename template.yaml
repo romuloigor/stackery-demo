@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Stackery Serverless API Example Stack
+Resources:
+  TriggerDeployFrontEndOnDeploy:
+    Type: Custom::TriggerDeployFrontEndOnDeploy
+    Properties:
+      ServiceToken: !GetAtt deployFrontEnd.Arn
+      Trigger: !Ref StackeryDeploymentTimestamp
+  deployFrontEnd:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-deployFrontEnd
+      Description: !Sub
+        - Stackery Stack ${StackeryStackTagName} Environment ${StackeryEnvironmentTagName} Function ${ResourceName}
+        - ResourceName: deployFrontEnd
+      CodeUri: src/deployFrontEnd
+      Handler: index.handler
+      Runtime: nodejs8.10
+      MemorySize: 3008
+      Timeout: 300
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - S3CrudPolicy:
+            BucketName: !Ref websiteHosting
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObjectAcl
+              Resource:
+                - !Sub ${websiteHosting.Arn}/*
+      Environment:
+        Variables:
+          XDG_CONFIG_HOME: /tmp/.config
+          BUCKET_NAME: !Ref websiteHosting
+          BUCKET_ARN: !GetAtt websiteHosting.Arn
+    Metadata:
+      StackeryName: deployFrontEnd
+  deployFrontEndDeployTrigger:
+    Type: Custom::FunctionDeployTrigger
+    Properties:
+      ServiceToken: !GetAtt deployFrontEnd.Arn
+  websiteHosting:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-websitehosting
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+    Metadata:
+      StackeryName: S3 Website Hosting
+  api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub
+        - ${ResourceName} From Stackery Stack ${StackeryStackTagName} Environment ${StackeryEnvironmentTagName}
+        - ResourceName: api
+      StageName: !Ref StackeryEnvironmentAPIGatewayStageName
+      DefinitionBody:
+        swagger: '2.0'
+        info: {}
+        paths:
+          /:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${getWelcomePage.Arn}/invocations
+              responses: {}
+      EndpointConfiguration: REGIONAL
+  getWelcomePage:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-getWelcomePage
+      Description: !Sub
+        - Stackery Stack ${StackeryStackTagName} Environment ${StackeryEnvironmentTagName} Function ${ResourceName}
+        - ResourceName: getWelcomePage
+      CodeUri: src/getWelcomePage
+      Handler: index.handler
+      Runtime: nodejs8.10
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+      Events:
+        apiGET:
+          Type: Api
+          Properties:
+            Path: /
+            Method: GET
+            RestApiId: !Ref api
+    Metadata:
+      StackeryName: getWelcomePage
+Parameters:
+  StackeryStackTagName:
+    Type: String
+    Description: Stack Name (injected by Stackery at deployment time)
+  StackeryEnvironmentTagName:
+    Type: String
+    Description: Environment Name (injected by Stackery at deployment time)
+  StackeryEnvironmentAPIGatewayStageName:
+    Type: String
+    Description: Environment name used for API Gateway Stage names (injected by Stackery at deployment time)
+  StackeryDeploymentTimestamp:
+    Type: Number
+    Description: Deployment preparation timestamp in milliseconds Since Epoch (injected by Stackery at deployment time)
